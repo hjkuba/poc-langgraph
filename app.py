@@ -8,12 +8,20 @@ O que este exemplo mostra:
   um grafo com decisão e loop entre chatbot e tools (agent/graph.py).
 - Tool calling: o LLM pode decidir chamar uma ferramenta (agent/tools.py)
   em vez de responder direto.
+- RAG (agent/retrieval.py): a cada turno, busca no vector store (indexado a
+  partir de data/*.md) os trechos mais relevantes para a pergunta e injeta
+  esse contexto na chamada ao LLM.
+- Persistência (agent/configuration.py): um checkpointer sqlite grava o
+  State (mensagens + contexto) a cada passo do grafo, associado a um
+  thread_id — o histórico sobrevive ao fim do processo.
 
 Estrutura (padrão src layout):
-- src/agent/state.py -> definição do State do grafo
-- src/agent/tools.py -> ferramentas disponíveis para o LLM
-- src/agent/graph.py -> LLM, nós, arestas (decisão + loop) e compile()
-- app.py             -> este arquivo: só o loop de conversa no terminal
+- src/agent/state.py         -> definição do State do grafo
+- src/agent/tools.py         -> ferramentas disponíveis para o LLM
+- src/agent/retrieval.py     -> indexação e busca do RAG (vector store)
+- src/agent/configuration.py -> LLM, embeddings e checkpointer (persistência)
+- src/agent/graph.py         -> nós, arestas (decisão + loop) e compile()
+- app.py                     -> este arquivo: só o loop de conversa no terminal
 
 Pré-requisitos:
 1. Ollama instalado e rodando (https://ollama.com)
@@ -26,14 +34,20 @@ Uso:
 """
 
 from agent.graph import graph
-from agent.state import State
+
+# LangGraph identifica cada conversa persistida (checkpointer, ver
+# agent/configuration.py) por um thread_id. Este app é single-sessão — um
+# terminal, uma conversa por vez — então um valor fixo já garante que
+# `python app.py` sempre recupera o histórico salvo na execução anterior.
+# Para várias conversas em paralelo, o thread_id passaria a vir de fora
+# (ex.: argumento de linha de comando).
+THREAD_ID = "cli"
 
 
 def main() -> None:
     print("POC LangChain + LangGraph. Digite 'sair' para encerrar.\n")
 
-    # O estado local mantém o histórico entre turnos do loop.
-    state: State = {"messages": []}
+    config = {"configurable": {"thread_id": THREAD_ID}}
 
     while True:
         user_input = input("Você: ").strip()
@@ -43,15 +57,21 @@ def main() -> None:
         if not user_input:
             continue
 
-        state["messages"].append(("user", user_input))
-        messages_before = len(state["messages"])
+        # Quantas mensagens já existiam antes deste turno (histórico salvo
+        # pelo checkpointer, desta sessão ou de uma execução anterior do
+        # processo) — usado abaixo para isolar só o que este turno gerou.
+        messages_before = len(graph.get_state(config).values.get("messages", []))
 
-        # Cada invoke roda o grafo do START ao END uma vez (podendo passar
-        # por "tools" e voltar ao chatbot mais de uma vez internamente).
-        state = graph.invoke(state)
+        # Não montamos mais o histórico à mão: passamos só a mensagem nova.
+        # Antes de rodar o grafo, o checkpointer carrega o State salvo para
+        # esse thread_id e o reducer add_messages (agent/state.py) anexa a
+        # mensagem nova a esse histórico.
+        state = graph.invoke({"messages": [("user", user_input)]}, config=config)
 
         # Mensagens novas geradas nesse turno: se alguma AIMessage tiver
-        # tool_calls, o LLM decidiu usar uma ferramenta antes da resposta final.
+        # tool_calls, o LLM decidiu usar uma ferramenta antes da resposta
+        # final (pode acontecer mais de uma vez no mesmo turno, daí olhar
+        # todas as mensagens novas, não só a penúltima).
         for message in state["messages"][messages_before:]:
             for call in getattr(message, "tool_calls", None) or []:
                 print(f"[tooling: {call['name']}({call['args']})]")

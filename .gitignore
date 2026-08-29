@@ -15,6 +15,10 @@ dist/
 # Variáveis de ambiente / segredos
 .env
 
+# Checkpoints do LangGraph (histórico de conversa persistido localmente;
+# sqlite em modo WAL grava mais de um arquivo dentro da pasta)
+.sqlite/
+
 # Editores / IDEs
 .vscode/
 .idea/

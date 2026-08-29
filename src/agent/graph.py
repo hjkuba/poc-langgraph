@@ -15,7 +15,7 @@ from langchain_core.messages import SystemMessage
 from langgraph.graph import StateGraph, START
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from .configuration import llm
+from .configuration import checkpointer, llm
 from .retrieval import retrieve
 from .state import State
 from .tools import tools
@@ -75,5 +75,8 @@ graph_builder.add_edge("retrieval", "chatbot")
 graph_builder.add_conditional_edges("chatbot", tools_condition)
 graph_builder.add_edge("tools", "chatbot")
 
-# compile() transforma a definição em um grafo executável.
-graph = graph_builder.compile()
+# compile() transforma a definição em um grafo executável. Passar
+# checkpointer aqui é o que faz o State (mensagens + contexto) ser
+# persistido a cada passo do grafo, associado a um thread_id — sem isso,
+# graph.invoke() continua funcionando, mas só guarda o State em memória.
+graph = graph_builder.compile(checkpointer=checkpointer)
