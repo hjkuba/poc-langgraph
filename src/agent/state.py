@@ -11,3 +11,7 @@ from langgraph.graph.message import add_messages
 # com que cada retorno do nó seja *anexado* à lista, em vez de substituí-la.
 class State(TypedDict):
     messages: Annotated[list, add_messages]
+    # Trechos recuperados do RAG para a pergunta mais recente. Sem reducer
+    # (sem Annotated): cada retorno do nó "retrieval" substitui a lista
+    # inteira, em vez de acumular entre turnos.
+    context: list[str]

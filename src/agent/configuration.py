@@ -1,6 +1,6 @@
-"""Configuração do LLM usado pelo agente."""
+"""Configuração do LLM e do modelo de embeddings usados pelo agente."""
 
-from langchain_ollama import ChatOllama
+from langchain_ollama import ChatOllama, OllamaEmbeddings
 
 from .tools import tools
 
@@ -11,6 +11,13 @@ from .tools import tools
 # fine-tuning de function calling mais criterioso e não repete esse padrão.
 MODEL_NAME = "qwen2.5:1.5b"
 
+# Modelo separado, especializado só em gerar embeddings (vetores) — usado
+# tanto para indexar os documentos em data/ quanto para vetorizar a
+# pergunta do usuário na busca por similaridade (RAG).
+EMBEDDING_MODEL_NAME = "nomic-embed-text"
+
 # bind_tools() ensina o LLM a emitir "tool_calls" em vez de texto quando
 # achar que uma ferramenta resolve melhor o pedido do usuário.
 llm = ChatOllama(model=MODEL_NAME, temperature=0).bind_tools(tools)
+
+embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL_NAME)
