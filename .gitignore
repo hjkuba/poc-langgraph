@@ -7,6 +7,11 @@ env/
 __pycache__/
 *.pyc
 
+# Artefatos de build (gerados por pip install -e .)
+*.egg-info/
+build/
+dist/
+
 # Variáveis de ambiente / segredos
 .env
 
