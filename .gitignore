@@ -1,0 +1,18 @@
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Bytecode e cache do Python
+__pycache__/
+*.pyc
+
+# Variáveis de ambiente / segredos
+.env
+
+# Editores / IDEs
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
