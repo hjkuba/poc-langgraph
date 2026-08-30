@@ -8,6 +8,9 @@ O que este exemplo mostra:
   um grafo com decisão e loop entre chatbot e tools (agent/graph.py).
 - Tool calling: o LLM pode decidir chamar uma ferramenta (agent/tools.py)
   em vez de responder direto.
+- Human-in-the-loop (agent/graph.py): antes de qualquer resposta final ser
+  mostrada, o grafo pausa via interrupt() e pede aprovação humana no
+  terminal (s/n) — só continua com uma decisão explícita.
 - RAG (agent/retrieval.py): a cada turno, busca no vector store (indexado a
   partir de data/*.md) os trechos mais relevantes para a pergunta e injeta
   esse contexto na chamada ao LLM.
@@ -33,7 +36,7 @@ Uso:
     python app.py
 """
 
-from agent.graph import graph
+from agent.graph import get_pending_approval, graph, resume_approval
 
 # LangGraph identifica cada conversa persistida (checkpointer, ver
 # agent/configuration.py) por um thread_id. Este app é single-sessão — um
@@ -67,6 +70,18 @@ def main() -> None:
         # esse thread_id e o reducer add_messages (agent/state.py) anexa a
         # mensagem nova a esse histórico.
         state = graph.invoke({"messages": [("user", user_input)]}, config=config)
+
+        # Se o nó "human_approval" chamou interrupt(), o grafo parou nesse
+        # ponto em vez de terminar o turno — acontece sempre, com a
+        # resposta final já pronta esperando aprovação.
+        pending = get_pending_approval(config)
+        if pending:
+            print("[aprovação necessária antes de enviar a resposta]")
+            print(f"  {pending['answer']}")
+            resposta = input("Aprovar? (s/n): ").strip().lower()
+            decisao = "aprovar" if resposta in {"s", "sim"} else "recusar"
+
+            state = resume_approval(decisao, config)
 
         # Mensagens novas geradas nesse turno: se alguma AIMessage tiver
         # tool_calls, o LLM decidiu usar uma ferramenta antes da resposta
