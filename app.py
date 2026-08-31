@@ -6,11 +6,14 @@ O que este exemplo mostra:
   interface padronizada de "invoke" sobre mensagens.
 - LangGraph entra como o orquestrador: define um "State" (agent/state.py) e
   um grafo com decisão e loop entre chatbot e tools (agent/graph.py).
-- Tool calling: o LLM pode decidir chamar uma ferramenta (agent/tools.py)
-  em vez de responder direto.
-- Human-in-the-loop (agent/graph.py): antes de qualquer resposta final ser
-  mostrada, o grafo pausa via interrupt() e pede aprovação humana no
-  terminal (s/n) — só continua com uma decisão explícita.
+- Tool calling: o LLM pode decidir chamar uma ferramenta local
+  (agent/tools.py) ou via um servidor MCP (agent/mcp_tools.py,
+  agent/mcp_server.py) em vez de responder direto — o grafo executa as
+  duas fontes em nós separados (tools_local/tools_mcp).
+- Human-in-the-loop (agent/graph.py): antes de EXECUTAR uma tool_call (local
+  ou MCP) pedida pelo LLM, o grafo pausa via interrupt() e pede aprovação
+  humana no terminal (s/n) — só continua com uma decisão explícita. Turnos
+  sem tool_call não passam por aprovação nenhuma.
 - RAG (agent/retrieval.py): a cada turno, busca no vector store (indexado a
   partir de data/*.md) os trechos mais relevantes para a pergunta e injeta
   esse contexto na chamada ao LLM.
@@ -20,7 +23,9 @@ O que este exemplo mostra:
 
 Estrutura (padrão src layout):
 - src/agent/state.py         -> definição do State do grafo
-- src/agent/tools.py         -> ferramentas disponíveis para o LLM
+- src/agent/tools.py         -> ferramentas locais disponíveis para o LLM
+- src/agent/mcp_server.py    -> servidor MCP mínimo (stdio)
+- src/agent/mcp_tools.py     -> client MCP + ponte síncrona pras tools remotas
 - src/agent/retrieval.py     -> indexação e busca do RAG (vector store)
 - src/agent/configuration.py -> LLM, embeddings e checkpointer (persistência)
 - src/agent/graph.py         -> nós, arestas (decisão + loop) e compile()
@@ -28,7 +33,7 @@ Estrutura (padrão src layout):
 
 Pré-requisitos:
 1. Ollama instalado e rodando (https://ollama.com)
-2. Um modelo baixado, ex:  ollama pull qwen2.5:1.5b
+2. Um modelo baixado, ex:  ollama pull qwen3.5:2b
 3. Pacote instalado em modo editável: pip install -e .
 4. Dependências instaladas: pip install -r requirements.txt
 
@@ -71,17 +76,31 @@ def main() -> None:
         # mensagem nova a esse histórico.
         state = graph.invoke({"messages": [("user", user_input)]}, config=config)
 
-        # Se o nó "human_approval" chamou interrupt(), o grafo parou nesse
-        # ponto em vez de terminar o turno — acontece sempre, com a
-        # resposta final já pronta esperando aprovação.
+        # Se "approval_local"/"approval_mcp" chamou interrupt(), o grafo
+        # parou nesse ponto em vez de seguir direto pra tool — só acontece
+        # nos turnos em que o LLM decidiu chamar uma ferramenta. `while`,
+        # não `if`: o chatbot pode encadear mais de uma tool_call no mesmo
+        # turno (ex.: chama de novo após o resultado da primeira) — cada
+        # uma pausa de novo em approval_local/approval_mcp, então é preciso
+        # aprovar de novo a cada pausa até o grafo realmente terminar o
+        # turno. Só checar uma vez deixava a última tool_call pendente sem
+        # nunca ser resolvida (resposta final vazia e log de tooling
+        # repetido, contando a mesma tool_call ainda não executada).
         pending = get_pending_approval(config)
-        if pending:
-            print("[aprovação necessária antes de enviar a resposta]")
-            print(f"  {pending['answer']}")
+        while pending:
+            # pending["tools"]: uma AIMessage pode pedir mais de uma tool
+            # de uma vez — aprovar/recusar vale pra todas juntas, então
+            # mostramos todas antes de perguntar (senão a(s) que não
+            # aparecesse(m) aqui seria(m) executada(s) sem nunca ter sido
+            # mostrada(s) pro usuário).
+            for call in pending["tools"]:
+                print(f"[aprovação necessária para chamar '{call['tool']}']")
+                print(f"  args: {call['args']}")
             resposta = input("Aprovar? (s/n): ").strip().lower()
             decisao = "aprovar" if resposta in {"s", "sim"} else "recusar"
 
             state = resume_approval(decisao, config)
+            pending = get_pending_approval(config)
 
         # Mensagens novas geradas nesse turno: se alguma AIMessage tiver
         # tool_calls, o LLM decidiu usar uma ferramenta antes da resposta
